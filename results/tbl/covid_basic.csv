@@ -1,0 +1,19 @@
+"var","cat","NEG","PEND","POS","p.value"
+"n","","7740","2856","685",NA
+"AGE_AT_ADMIT","mean(sd) [miss]","54.8 (19.6) [0]","58.5 (18.7) [0]","55.7 (19.1) [0]",0
+"ICU_LENGTH_OF_STAY_DAYS","mean(sd) [miss]","3.5 (4.2) [0.92]","4.2 (5.3) [0.85]","6.5 (7) [0.73]",0
+"ADMSN_DX_GRP","GENERAL SYMPTOMS AND SIGNS,n(%) [miss]","623 (8.1%) [0.14]","357 (12.5%) [0.37]","37 (5.4%) [1.54]",5e-04
+"ADMSN_DX_GRP","INFLUENZA AND PNEUMONIA,n(%) [miss]","69 (0.9%) [0.14]","93 (3.3%) [0.37]","16 (2.3%) [1.54]",5e-04
+"ADMSN_DX_GRP","OT,n(%) [miss]","5819 (75.2%) [0.14]","1434 (50.2%) [0.37]","187 (27.3%) [1.54]",5e-04
+"ADMSN_DX_GRP","OTHER BACTERIAL DISEASES,n(%) [miss]","244 (3.1%) [0.14]","135 (4.7%) [0.37]","42 (6.1%) [1.54]",5e-04
+"ADMSN_DX_GRP","PERSONS WITH POTENTIAL HEALTH HAZARDS,n(%) [miss]","8 (0.1%) [0.14]","4 (0.1%) [0.37]","1 (0.2%) [1.54]",5e-04
+"ADMSN_DX_GRP","SYMPTOMS AND SIGNS INVOLVING THE CIRCULATORY AND RESPIRATORY SYSTEMS,n(%) [miss]","517 (6.7%) [0.14]","804 (28.1%) [0.37]","130 (19%) [1.54]",5e-04
+"ADMSN_DX_GRP","SYMPTOMS AND SIGNS INVOLVING THE DIGESTIVE SYSTEM AND ABDOMEN,n(%) [miss]","480 (6.2%) [0.14]","157 (5.5%) [0.37]","30 (4.4%) [1.54]",5e-04
+"DISCH_DISP_GRP","DEATH,n(%) [miss]","194 (2.5%) [0]","107 (3.8%) [0]","50 (7.3%) [0]",5e-04
+"DISCH_DISP_GRP","HOME,n(%) [miss]","5520 (71.3%) [0]","1937 (67.8%) [0]","455 (66.4%) [0]",5e-04
+"DISCH_DISP_GRP","OT,n(%) [miss]","964 (12.4%) [0]","203 (7.1%) [0]","94 (13.7%) [0]",5e-04
+"DISCH_DISP_GRP","SNF-HOSP-REHAP-LTC-HHA,n(%) [miss]","1611 (20.8%) [0]","735 (25.7%) [0]","103 (15%) [0]",5e-04
+"ICU_IND","0,n(%) [miss]","5889 (76.1%) [0]","2160 (75.6%) [0]","473 (69%) [0]",0.0015
+"ICU_IND","1,n(%) [miss]","2219 (28.7%) [0]","795 (27.8%) [0]","229 (33.4%) [0]",0.0015
+"SEX_FEMALE","0,n(%) [miss]","3797 (49.1%) [0]","1500 (52.5%) [0]","339 (49.5%) [0]",0.069
+"SEX_FEMALE","1,n(%) [miss]","3943 (50.9%) [0]","1356 (47.5%) [0]","346 (50.5%) [0]",0.069
