@@ -1,303 +1,454 @@
-require_libraries<-function(package_list,verb=T){
+##---------------------------helper functions--------------------------------------##
+## install (if needed) and require packages
+require_libraries<-function(package_list){
+  #install missing packages
+  install_pkg<-as.data.frame(installed.packages())
+  new_packages<-package_list[!(package_list %in% install_pkg[which(install_pkg$LibPath==.libPaths()[1]),"Package"])]
+  if(length(new_packages)>0){
+    install.packages(new_packages,lib=.libPaths()[1],repos = "http://cran.us.r-project.org")
+  }
+  
   for (lib in package_list) {
-    chk_install<-!(lib %in% installed.packages()[,"Package"])
-    if(chk_install){
-      install.packages(lib,repos = "http://cran.us.r-project.org")
-    }
-    library(lib, character.only=TRUE,lib.loc=.libPaths())
-    if(verb){
-      cat("\n", lib, " loaded.", sep="") 
-    }
+    library(lib, character.only=TRUE,lib.loc=.libPaths()[1])
+    cat("\n", lib, " loaded.", sep="")
   }
 }
 
-
-unzip_redcap<-function(req_nm){
-  #unzip and save
-  zipF<-paste0("./",req_nm,"-raw.zip")
-  unzip(zipF)
-  
-  #load date
-  out<-list(pat_tbl=read.csv(paste0("./",req_nm,"/",req_nm,"-patient.csv"),stringsAsFactors = F,na.strings = c(""," ")),
-            data_tbl=read.csv(paste0("./",req_nm,"/",req_nm,"-data.csv"),stringsAsFactors = F,na.strings = c(""," ")),
-            code_info=read.csv(paste0("./",req_nm,"/",req_nm,"-code.info.csv"),stringsAsFactors = F,na.strings = c(""," ")))
-
-  return(out)  
-}
-
-
-#exact matching with coarsening, with/without replacement
-matched_sample<-function(case_ref,
-                         ctrl_pool,
-                         id_col,
-                         exact=c(),
-                         coarse=c(),
-                         coarse_range=c(),
-                         other_cov=c(),
-                         weighting_scheme=c("weighted","hiearchical"),
-                         wt=c(1),
-                         match_rt=match_rt,
-                         replace=FALSE,
-                         verbose=TRUE){
-  #only keep relavant columns
-  case_ref %<>% select(c(id_col,exact,coarse,other_cov))
-  ctrl_pool %<>% select(c(id_col,exact,coarse,other_cov))
-  
-  #--exact matching with coarsening (relative range)
-  filter_cond_vec<-c()
-  for(cond_i in seq_along(coarse)){
-    filter_cond_vec<-c(filter_cond_vec,
-                       paste0(coarse[cond_i],".y",">=",coarse[cond_i],".x-",coarse_range[cond_i],"&",
-                              coarse[cond_i],".y","<=",coarse[cond_i],".x+",coarse_range[cond_i]))
-  }
-  filter_cond<-paste0("(",paste(filter_cond_vec,collapse = ")&("),")")
-  
-  #--apply exact matching conditions
-  ctrl_match<-case_ref %>% unique %>%
-    dplyr::rename("id"=id_col) %>% #for convenience
-    inner_join(ctrl_pool,by=exact)
-  
-  #--apply relative/coarsening conditions
-  if(length(coarse) > 0){
-    ctrl_match %<>% filter(eval(parse(text=filter_cond)))
+connect_to_db<-function(DBMS_type,driver_type=c("OCI","JDBC"),config_file){
+  if(is.null(driver_type)){
+    stop("must specify type of database connection driver!")
   }
   
-  #checkpoint--if no additional matched samples can be found, break out
-  if(nrow(ctrl_match)==0){
-    stop("no matched sample can be found!")
-  }
-  
-  #--rank multiple matched controls based on similarity metrics
-  similarity_cond_vec<-c()
-  if(weighting_scheme=="hiearchical"){
-    wt<-rank(wt)
-    for(cond_i in seq_along(coarse)){
-      similarity_cond_vec<-c(similarity_cond_vec,
-                             paste0("abs((",coarse[cond_i],".x","-",coarse[cond_i],".y",")*",10^(wt[cond_i]-1),")"))
+  if(DBMS_type=="Oracle"){
+    if(driver_type=="OCI"){
+      require_libraries("ROracle")
+      conn<-dbConnect(ROracle::Oracle(),
+                      config_file$username,
+                      config_file$password,
+                      file.path(config_file$access,config_file$sid))
+    }else if(driver_type=="JDBC"){
+      require_libraries("RJDBC")
+      # make sure ojdbc6.jar is in the AKI_CDM folder
+      # Source: https://www.r-bloggers.com/connecting-r-to-an-oracle-database-with-rjdbc/
+      drv<-JDBC(driverClass="oracle.jdbc.OracleDriver",
+                classPath="./ojdbc6.jar")
+      url <- paste0("jdbc:oracle:thin:@", config_file$access,":",config_file$sid)
+      conn <- RJDBC::dbConnect(drv, url, 
+                               config_file$username, 
+                               config_file$password)
+    }else{
+      stop("The driver type is not currently supported!")
     }
-    similarity_formula<-paste0("rank(",paste(similarity_cond_vec,collapse = "+"),",ties.method=\"random\")")
     
-  }else if(weighting_scheme=="weighted"){
-    for(cond_i in seq_along(coarse)){
-      similarity_cond_vec<-c(similarity_cond_vec,
-                             paste0("abs((",coarse[cond_i],".x","-",coarse[cond_i],".y",")*",wt[cond_i],")"))
+  }else if(DBMS_type=="tSQL"){
+    require_libraries("RJDBC")
+    # make sure sqljdbc.jar is in the AKI_CDM folder
+    drv <- JDBC(driverClass="com.microsoft.sqlserver.jdbc.SQLServerDriver",
+                classPath="./sqljdbc.jar",
+                identifier.quote="`")
+    url <- paste0("jdbc:sqlserver:", config_file$access,
+                  ";DatabaseName=",config_file$cdm_db_name,
+                  ";username=",config_file$username,
+                  ";password=",config_file$password)
+    conn <- dbConnect(drv, url)
+    
+  }else if(DBMS_type=="PostgreSQL"){
+    #not tested yet!
+    require_libraries("RPostgres")
+    server<-gsub("/","",str_extract(config_file$access,"//.*(/)"))
+    host<-gsub(":.*","",server)
+    port<-gsub(".*:","",server)
+    conn<-dbConnect(RPostgres::Postgres(),
+                    host=host,
+                    port=port,
+                    dbname=config_file$cdm_db_name,
+                    user=config_file$username,
+                    password=config_file$password)
+  }else{
+    stop("the DBMS type is not currectly supported!")
+  }
+  attr(conn,"DBMS_type")<-DBMS_type
+  attr(conn,"driver_type")<-driver_type
+  return(conn)
+}
+
+chunk_load<-function(conn,dataset="",by_row=T,sample_by="",
+                     chunk_size=1000,download_chunk=F,verb=T){
+  dat<-c()
+  i<-0
+  error<-FALSE
+  row_remain<-Inf
+  
+  if(by_row){
+    while(!error&row_remain>0){
+      dat_add<-dbGetQuery(conn,
+                          paste("select * from (",
+                                "select m.*, rownum r from",dataset," m)",
+                                "where r >= ",i+1,"and r < ",i+chunk_size))
+
+      #check remaining rows
+      row_remain<-nrow(dat_add)
+      
+      #attach rows
+      if(download_chunk){
+        saveRDS(dat_add,file=paste0("./data/raw/",dataset,"_",i,".rda"))
+      }else{
+        dat %<>% bind_rows(dat_add)
+      }
+      
+      #report progress
+      if(verb){
+        cat("row",i+1,"to","row",i+chunk_size,"loaded.\n") 
+      }
+      
+      #loop updates
+      i<-i+chunk_size
     }
-    similarity_formula<-paste(similarity_cond_vec,collapse = "+")
     
   }else{
-    stop("similarity measuring method between case and control is not currently supported!")
-  }
-  
-  ctrl_match %<>%
-    group_by(id) %>%
-    mutate(similarity_rank=eval(parse(text=similarity_formula))) %>%
-    ungroup 
-  
-  #sample without replacement
-  max_rk<-max(ctrl_match$similarity_rank)
-  case_n<-length(unique(ctrl_match$id))
-  ctrl_match_undup<-c()
-  
-  match_rd<-1
-  while(match_rd<=match_rt){
-    #--identify a new batch of matched samples
-    ctrl_match_undup_rd<-ctrl_match %>%
-      filter(similarity_rank<=1)
-
-    if(!replace){
-      #--matched samples could be the same over different cases
-      ctrl_match_undup_rd %<>%
-        distinct(mrn,.keep_all=TRUE)
+    if(sample_by==""){
+      stop("Must specify the column name by which to cut dataset into chunks when by_row = F!")
+    }
+    pos<-3
+    for(i in seq(0,9,1)){
+      dat_add<-dbGetQuery(conn,
+                          paste("select * from",dataset,
+                                "where substr(lpad(",sample_by,",",pos*2,",0),",pos,",",pos,")=",i))
       
-      ctrl_match %<>% 
-        anti_join(ctrl_match_undup_rd,by=id_col) %>%
-        group_by(id) %>%
-        dplyr::mutate(similarity_rank=rank(similarity_rank,ties.method = "random")) %>% #move 2nd matched sample up
-        ungroup
+      #attach rows
+      if(download_chunk){
+        saveRDS(dat_add,file=paste0("./data/raw/",dataset,"_",i,".rda"))
+      }else{
+        dat %<>% bind_rows(dat_add)
+      }
       
-      #--go over the pool of matched samples until there is no duplicates
-      matched_n<-length(unique(ctrl_match_undup_rd$id))
-      while(matched_n<case_n&match_rd<=match_rt&match_rd<=max_rk) {
-        case_unmatched<-ctrl_match %>%
-          anti_join(ctrl_match_undup_rd,by="id") %>%
-          filter(similarity_rank > 1) %>% #first matched sample already been picked
-          group_by(id) %>%
-          dplyr::mutate(similarity_rank=rank(similarity_rank)) %>% #move 2nd matched sample up
-          ungroup
-        
-        #--when no more cases can be matched
-        if(nrow(case_unmatched)==0) break
-
-        ctrl_match_undup_rd %<>%
-          bind_rows(case_unmatched %>%
-                      filter(similarity_rank<=1))
-        
-        #--end-of-inner-loop updates
-        matched_n<-length(unique(ctrl_match_undup_rd$id))
-        ctrl_match %<>% 
-          anti_join(ctrl_match_undup_rd,by=id_col) %>%
-          group_by(id) %>%
-          dplyr::mutate(similarity_rank=rank(similarity_rank,ties.method = "random")) %>% #move 2nd matched sample up
-          ungroup
+      #report progress
+      if(verb){
+        cat(sample_by,"with",pos,"th digit equals to",i,"loaded.\n") 
       }
     }
-
-    #--end-of-outer-loop updates
-    ctrl_match_undup %<>% 
-      bind_rows(ctrl_match_undup_rd %>% mutate(similarity_rank=match_rd))
-    
-    if(verbose){
-      cat("match round:",match_rd,"; ","matched samples:",matched_n,"\n")
-    }
-    
-    match_rd<-match_rd+1
   }
   
-  id_ctrl<-paste0(id_col,"_ctrl")
-  ctrl_match_undup %<>%
-    dplyr::rename(!!sym(id_ctrl) := id_col) %>%
-    dplyr::rename(!!sym(id_col) := "id")
-  
-  
-  return(ctrl_match_undup)
+  if(!download_chunk){
+    return(dat)
+  }
 }
 
-#one-hot coding is required!
-#require (RANN, data.table)
-strata_sample<-function(ref_dat, #reference dataset
-                        match_dat, #matching dataset
-                        keep_col="patient_num",
-                        compare_metric=c("age","sex"), #matching criteria
-                        boots=5,
-                        nnk=boots+1, #number of candidate neighbors, recommend:nnk>=boots
-                        searchtype=c("standard", "priority", "radius"),
-                        replace=F,
-                        verb=T){
-  #attach row_id
-  ref_dat$row_id<-1:nrow(ref_dat)
-  match_dat$row_id<-(nrow(ref_dat)+1):(nrow(ref_dat)+nrow(match_dat))
+
+## parse Oracle sql lines
+parse_sql<-function(file_path,...){
+  param_val<-list(...)
+
+  #read file
+  con<-file(file_path,"r")
   
-  boots_samp<-c()
-  for(k in 1:boots){
-    start_k<-Sys.time()
-    if(verb){
-      cat("bootstrapped sample:",k,"\n")
+  #initialize string
+  sql_string <- ""
+  
+  #intialize result holder
+  params_ind<-FALSE
+  tbl_out<-NULL
+  action<-NULL
+  
+  while (TRUE){
+    #parse the first line
+    line <- readLines(con, n = 1)
+    #check for endings
+    if (length(line)==0) break
+    #collect overhead info
+    if(grepl("^(/\\*out)",line)){
+      #output table name
+      tbl_out<-trimws(gsub("(/\\*out\\:\\s)","",line),"both")
+    }else if(grepl("^(/\\*action)",line)){
+      #"write" or "query"(fetch) the output table
+      action<-trimws(gsub("(/\\*action\\:\\s)","",line),"both")
+    }else if(grepl("^(/\\*params)",line)){
+      params_ind<-TRUE
+      #breakdown global parameters
+      params<-gsub(",","",strsplit(trimws(gsub("(/\\*params\\:\\s)","",line),"both")," ")[[1]])
+      params_symbol<-params
+      #normalize the parameter names
+      params<-gsub("&&","",params)
     }
-    
-    start_kt<-Sys.time()
-    #identify k-nearest-neighbour
-    sample_pos<-ref_dat$row_id
-    sample_neg<-nn2(match_dat[,compare_metric],
-                    ref_dat[,compare_metric],
-                    k=nnk,
-                    searchtype=searchtype)$nn.idx[,sample(seq_len(nnk),1)] #inject randomness
-    sample_neg<-match_dat[sample_neg,]$row_id
-    
-    #reconstruct stratified samples
-    idx_lst<-c(sample_pos,sample_neg)
-    idx_lst<-idx_lst[order(idx_lst)]
-    
-    if(verb){
-      cat("...reconstruct stratified sample of size ",length(idx_lst),
-          " in ",Sys.time()-start_kt,units(Sys.time()-start_kt),"\n")
+    #remove the first line
+    line<-gsub("\\t", " ", line)
+    #translate comment symbol '--'
+    if(grepl("--",line) == TRUE){
+      line <- paste(sub("--","/*",line),"*/")
     }
-    
-    start_kt<-Sys.time()
-    idx_map<-as.data.frame(table(idx_lst))
-    sample_reconst0<-as.data.table(rbind(ref_dat[,c(compare_metric,"row_id",keep_col)],
-                                         match_dat[,c(compare_metric,"row_id",keep_col)]))[(row_id %in% idx_map$idx_lst)]
-    sample_reconst<-sample_reconst0[rep(seq_len(nrow(sample_reconst0)),idx_map$Freq)]
-    sample_reconst[,boots_rnd:=k]
-    
-    boots_samp<-rbind(boots_samp,sample_reconst)
-    
-    if(verb){
-      cat(".....rebuild the balanced sample in ",
-          Sys.time()-start_kt,units(Sys.time()-start_kt),"\n")
+    #attach new line
+    if(!grepl("^(/\\*)",line)){
+      sql_string <- paste(sql_string, line)
+    }
+  }
+  close(con)
+
+  #update parameters as needed
+  if(params_ind){
+    #align param_val with params
+    params_miss<-params[!(params %in% names(param_val))]
+    for(j in seq_along(params_miss)){
+      param_val[params_miss[j]]<-list(NULL)
+    }
+    param_val<-param_val[which(names(param_val) %in% params)]
+    param_val<-param_val[order(names(param_val))]
+    params_symbol<-params_symbol[order(params)]
+    params<-params[order(params)]
+
+    #substitube params_symbol by param_val
+    for(i in seq_along(params)){
+      sql_string<-gsub(params_symbol[i],
+                       ifelse(is.null(param_val[[i]])," ",
+                              ifelse(params[i]=="db_link",
+                                     paste0("@",param_val[[i]]),
+                                     ifelse(params[i] %in% c("start_date","end_date"),
+                                            paste0("'",param_val[[i]],"'"),
+                                            param_val[[i]]))),
+                       sql_string)
+    }
+  }
+  #clean up excessive "[ ]." or "[@" in tSQL when substitute value is NULL
+  sql_string<-gsub("\\[\\ ]\\.","",sql_string)
+  sql_string<-gsub("\\[@","[",sql_string)
+  
+  out<-list(tbl_out=tbl_out,
+            action=action,
+            statement=sql_string)
+  
+  return(out)
+}
+
+
+## execute single sql snippet
+execute_single_sql<-function(conn,statement,write,table_name){
+  DBMS_type<-attr(conn,"DBMS_type")
+  driver_type<-attr(conn,"driver_type")
+  
+  if(write){
+    #oracle and sql sever uses different connection driver and different functions are expected for sending queries
+    #dbSendQuery silently returns an S4 object after execution, which causes error in RJDBC connection (for sql server)
+    if(DBMS_type=="Oracle"){
+      if(!(driver_type %in% c("OCI","JDBC"))){
+        stop("Driver type not supported for ",DBMS_type,"!\n")
+      }else{
+        try_tbl<-try(dbGetQuery(conn,paste("select * from",table_name,"where 1=0")),silent=T)
+        if(is.null(attr(try_tbl,"condition"))){
+          if(driver_type=="OCI"){
+            dbSendQuery(conn,paste("drop table",table_name)) #in case there exists same table name
+          }else{
+            dbSendUpdate(conn,paste("drop table",table_name)) #in case there exists same table name
+          }
+        }
+        
+        if(driver_type=="OCI"){
+          dbSendQuery(conn,statement) 
+        }else{
+          dbSendUpdate(conn,statement)
+        }
+      }
       
-      cat("Finish bootstrap sample ",k," in ",
-          Sys.time()-start_k,units(Sys.time()-start_k),"\n")
+    }else if(DBMS_type=="tSQL"){
+      if(driver_type=="JDBC"){
+        try_tbl<-try(dbGetQuery(conn,paste("select * from",table_name,"where 1=0")),silent=T)
+        if(!grepl("(table or view does not exist)+",tolower(attr(try_tbl,"class")))){
+          dbSendUpdate(conn,paste("drop table",table_name)) #in case there exists same table name
+        }
+        dbSendUpdate(conn,statement)
+      }else{
+        stop("Driver type not supported for ",DBMS_type,"!\n")
+      }
+    }else{
+      stop("DBMS type not supported!")
     }
-    
-    if(!replace){
-      match_dat<-match_dat[!(match_dat$row_id %in% unique(sample_neg)),]
-    }
+  }else{
+    dat<-dbGetQuery(conn,statement)
+    return(dat)
   }
-  return(boots_samp)
-}
-
-parse_med_ont_va<-function(path_vec){
-  if (!is.null(dim(path_vec))||path_vec[1]=="")
-    stop("input has to be a non-empty vector!")
-  
-  n<-length(path_vec)
-  path_init<-data.frame(ROW_ID=seq(1,n,by=1),
-                        PATH=path_vec,
-                        stringsAsFactors = F)
-  
-  # initial string clean-up
-  path_init %<>% 
-    mutate(PATH = gsub("\\\\i2b2\\\\Medications","",PATH)) %>% # remove common pre-fix
-    mutate(PATH = gsub(" / ","/",PATH)) # remove redundant spaces
-  
-  # calculate depths of overall PATH and VA segment
-  path_init %<>%
-    mutate(NLEVEL=stringr::str_count(PATH,"\\\\"),
-           VA_NLEVEL=stringr::str_count(PATH,"\\\\\\["))
-  
-  #--concept level
-  path_parse<-path_init %>% mutate(CONCEPT_LEV=6)
-  
-  #--SCDF or SCBF level
-  path_add<-path_init %>%
-    mutate(PATH = ifelse(NLEVEL==(VA_NLEVEL+1),PATH,
-                         ifelse(VA_NLEVEL==0,
-                                stringr::str_extract(PATH,paste0("^([^\\\\]*\\\\){",pmin(3,NLEVEL),"}")),
-                                stringr::str_extract(PATH,paste0("^([^\\\\]*\\\\){",(VA_NLEVEL+2),"}")))))
-  
-  path_parse %<>% bind_rows(path_add %>% mutate(CONCEPT_LEV=5))
-  
-  #--extract generic/brand names from SCDF/SCBF concepts (usually first word)
-  path_add %<>%
-    mutate(scdf = gsub("[^\\\\]*\\\\","",gsub("\\\\$","",PATH)),
-           generic = case_when(grepl("\\/",scdf) ~ stringr::str_extract(scdf,".*\\/+[^ ]* {1}"),
-                               TRUE ~ gsub(" .*","",scdf))) %>%
-    mutate(PATH = stringr::str_replace(PATH,scdf,generic)) %>%
-    dplyr::select(ROW_ID,PATH,NLEVEL,VA_NLEVEL)
-  
-  path_parse %<>% bind_rows(path_add %>% mutate(CONCEPT_LEV=4))
-  
-  #--VA class levels
-  va_max<-max(path_init$VA_NLEVEL)
-  for(lev in 1:va_max){
-    path_add<-path_init %>%
-      mutate(PATH=ifelse(VA_NLEVEL==0, 
-                         stringr::str_extract(PATH,paste0("^([^\\\\]*\\\\){2}")),
-                         stringr::str_extract(PATH,paste0("^([^\\\\]*\\\\){",
-                                                          pmin((VA_NLEVEL+1),(lev+1)),
-                                                          "}"))))
-    
-    path_parse %<>% bind_rows(path_add %>% mutate(CONCEPT_LEV=lev))
-  }
-  
-  path_parse %<>% 
-    spread(CONCEPT_LEV,PATH,sep="") %>%
-    arrange(ROW_ID)
-  
-  return(path_parse)
+  cat("create temporary table: ", table_name, ".\n")
 }
 
 
-# multiclass y is not supported yet!
-# data_type should be a vector of "cat" or "num"
+## execute multiple sql snippets
+#---statements have to be in correct logical order
+execute_batch_sql<-function(conn,statements,verb,...){
+  for(i in seq_along(statements)){
+    sql<-parse_sql(file_path=statements[i],...)
+    execute_single_sql(conn,
+                       statement=sql$statement,
+                       write=(sql$action=="write"),
+                       table_name=toupper(sql$tbl_out))
+    if(verb){
+      cat(statements[i],"has been executed and table",
+          toupper(sql$tbl_out),"was created.\n")
+    }
+  }
+}
+
+
+## clean up intermediate tables
+drop_tbl<-function(conn,table_name){
+  DBMS_type<-attr(conn,"DBMS_type")
+  driver_type<-attr(conn,"driver_type")
+  
+  if(DBMS_type=="Oracle"){
+    # purge is only required in Oracle for completely destroying temporary tables
+    drop_temp<-paste("drop table",table_name,"purge") 
+    if(driver_type=="OCI"){
+      dbSendQuery(conn,drop_temp)
+    }else if(driver_type=="JDBC"){
+      dbSendUpdate(conn,drop_temp)
+    }else{
+      stop("Driver type not supported for ",DBMS_type,"!.\n")
+    }
+    
+  }else if(DBMS_type=="tSQL"){
+    drop_temp<-paste("drop table",table_name)
+    if(driver_type=="JDBC"){
+      dbSendUpdate(conn,drop_temp)
+    }else{
+      stop("Driver type not supported for ",DBMS_type,"!.\n")
+    }
+    
+  }else{
+    warning("DBMS type not supported!")
+  }
+}
+
+## print link for LOINC code search result
+get_loinc_ref<-function(loinc){
+  #url to loinc.org 
+  url<-paste0(paste0("https://loinc.org/",loinc))
+  
+  #return the link
+  return(url)
+}
+
+
+## pring link for RXNORM codes search result
+get_rxcui_nm<-function(rxcui){
+  #url link to REST API
+  rx_url<-paste0("https://rxnav.nlm.nih.gov/REST/rxcui/",rxcui,"/")
+  
+  #get and parse html object
+  rxcui_obj <- getURL(url = rx_url)
+  rxcui_content<-htmlParse(rxcui_obj)
+  
+  #extract name
+  rxcui_name<-xpathApply(rxcui_content, "//body//rxnormdata//idgroup//name", xmlValue)
+  
+  if (length(rxcui_name)==0){
+    rxcui_name<-NA
+  }else{
+    rxcui_name<-unlist(rxcui_name)
+  }
+  return(rxcui_name)
+}
+
+get_ndc_nm<-function(ndc){
+  #url link to REST API
+  rx_url<-paste0("https://ndclist.com/?s=",ndc)
+  
+  #get and parse html object
+  rx_obj<-getURL(url = rx_url)
+  if (rx_obj==""){
+    rx_name<-NA
+  }else{
+    #extract name
+    rx_content<-htmlParse(rx_obj)
+    rx_attr<-xpathApply(rx_content, "//tbody//td[@data-title]",xmlAttrs)
+    rx_name<-xpathApply(rx_content, "//tbody//td[@data-title]",xmlValue)[which(rx_attr=="Proprietary Name")]
+    rx_name<-unlist(rx_name)
+    
+    if(length(rx_name) > 1){
+      rx_name<-rx_url
+    }
+  }
+  return(rx_name)
+}
+
+
+#ref: https://www.r-bloggers.com/web-scraping-google-urls/
+google_code<-function(code,nlink=1){
+  code_type<-ifelse(gsub(":.*","",code)=="CH","CPT",
+                    gsub(":.*","",code))
+  code<-gsub(".*:","",code)
+  
+  #search on google
+  gu<-paste0("https://www.google.com/search?q=",code_type,":",code)
+  html<-getURL(gu)
+  
+  #parse HTML into tree structure
+  doc<-htmlParse(html)
+  
+  #extract url nodes using XPath. Originally I had used "//a[@href][@class='l']" until the google code change.
+  attrs<-xpathApply(doc, "//h3//a[@href]", xmlAttrs)
+  
+  #extract urls
+  links<-sapply(attrs, function(x) x[[1]])
+  
+  #only keep the secure links
+  links<-links[grepl("(https\\:)+",links)]
+  links<-gsub("(\\&sa=U).*$","",links)
+  links<-paste0("https://",gsub(".*(https://)","",links))
+  
+  #free doc from memory
+  free(doc)
+  
+  return(links[1])
+}
+
+
+## render report
+render_report<-function(which_report="./report/AKI_CDM_EXT_VALID_p1_QA.Rmd",
+                        DBMS_type,driver_type,remote_CDM=F,
+                        start_date,end_date=as.character(Sys.Date())){
+  
+  # to avoid <Error in unlockBinding("params", <environment>) : no binding for "params">
+  # a hack to trick r thinking it's in interactive environment --not work!
+  # unlockBinding('interactive',as.environment('package:base'))
+  # assign('interactive',function() TRUE,envir=as.environment('package:base'))
+  
+  rmarkdown::render(input=which_report,
+                    params=list(DBMS_type=DBMS_type,
+                                driver_type=driver_type,
+                                remote_CDM=remote_CDM,
+                                start_date=start_date,
+                                end_date=end_date),
+                    output_dir="./output/",
+                    knit_root_dir="../")
+}
+
+
+## convert long mastrix to wide sparse matrix
+long_to_sparse_matrix<-function(df,id,variable,val,binary=FALSE){
+  if(binary){
+    x_sparse<-with(df,
+                   sparseMatrix(i=as.numeric(as.factor(get(id))),
+                                j=as.numeric(as.factor(get(variable))),
+                                x=1,
+                                dimnames=list(levels(as.factor(get(id))),
+                                              levels(as.factor(get(variable))))))
+  }else{
+    x_sparse<-with(df,
+                   sparseMatrix(i=as.numeric(as.factor(get(id))),
+                                j=as.numeric(as.factor(get(variable))),
+                                x=ifelse(is.na(get(val)),1,as.numeric(get(val))),
+                                dimnames=list(levels(as.factor(get(id))),
+                                              levels(as.factor(get(variable))))))
+  }
+  
+  return(x_sparse)
+}
+
+
 univar_analysis_mixed<-function(id,grp,X,data_type,pretty=F){
   if(ncol(X)!=length(data_type)){
     stop("data types of X need to be specified")
   }
   
   #TODO: when there is only 1 category
-
-    # anova
+  
+  # anova
   df_num<-data.frame(cbind(id,grp,X[,(data_type=="num"),drop=F]),stringsAsFactors=F) %>%
     gather(var,val,-grp,-id) %>%
     mutate(grp=as.factor(grp)) %>%
@@ -325,7 +476,7 @@ univar_analysis_mixed<-function(id,grp,X,data_type,pretty=F){
               by="var") %>%
     mutate(label=paste0(n,"; ",
                         # round(val_miss/n,2),"; ", #missing rate
-                        round(val_mean,1),"(",round(val_sd,2),"); ",
+                        round(val_mean,2),"(",round(val_sd,3),"); ",
                         val_med,"(",val_q1,",",val_q3,")"))
   
   
@@ -339,7 +490,7 @@ univar_analysis_mixed<-function(id,grp,X,data_type,pretty=F){
     dplyr::mutate(tot=length(unique(id))) %>%
     ungroup %>%
     group_by(var) %>%
-    dplyr::mutate(val_miss=sum(is.na(val))) %>%
+    dplyr::mutate(val_miss=sum(is.na(val))) %>% #
     ungroup %>% filter(!is.na(val)) %>%
     group_by(var,grp,tot,val_miss,val) %>%
     dplyr::summarise(n=length(unique(id))) %>%
@@ -363,23 +514,146 @@ univar_analysis_mixed<-function(id,grp,X,data_type,pretty=F){
       spread(grp,val) %>%
       bind_rows(out_num %>%
                   mutate(label2=paste0(round(val_mean,1)," (",round(val_sd,1),")"," [",round(val_miss/n,2),"]")) %>%
-              dplyr::select(var,grp,p.value,label2) %>% spread(grp,label2)) %>%
+                  dplyr::select(var,grp,p.value,label2) %>% spread(grp,label2)) %>%
       bind_rows(out_cat %>%
                   unite("var",c("var","val"),sep="=") %>%
-                  mutate(label2=paste0(n," (",round(prop*100,1),"%)"," [",round(val_miss/n,2),"]")) %>%
+                  mutate(label2=paste0(n," (",round(prop*100,1),"%)"," [",round(val_miss/tot,2),"]")) %>%
                   dplyr::select(var,grp,p.value,label2) %>% spread(grp,label2)) %>%
       mutate(p.value=round(p.value,4)) %>%
       separate("var",c("var","cat"),sep="=",extra="merge",fill="right") %>%
       mutate(cat=case_when(var=="n" ~ "",
                            is.na(cat) ~ "mean(sd) [miss]",
                            TRUE ~ paste0(cat,",n(%) [miss]")))
-
+    
   }else{
     out<-list(out_num=out_num,
               out_cat=out_cat)
   }
-
+  
   return(out)
 }
 
+get_perf_summ<-function(pred,real,keep_all_cutoffs=F){
+  # various performace table
+  pred_obj<-ROCR::prediction(pred,real)
+  
+  prc<-performance(pred_obj,"prec","rec")
+  roc<-performance(pred_obj,"sens","spec")
+  nppv<-performance(pred_obj,"ppv","npv")
+  pcfall<-performance(pred_obj,"pcfall")
+  acc<-performance(pred_obj,"acc")
+  fscore<-performance(pred_obj,"f")
+  mcc<-performance(pred_obj,"phi")
+  
+  perf_at<-data.frame(cutoff=prc@alpha.values[[1]],
+                      prec=prc@y.values[[1]],
+                      rec_sens=prc@x.values[[1]],
+                      stringsAsFactors = F) %>% 
+    arrange(cutoff) %>%
+    left_join(data.frame(cutoff=nppv@alpha.values[[1]],
+                         ppv=nppv@y.values[[1]],
+                         npv=nppv@x.values[[1]],
+                         stringsAsFactors = F),
+              by="cutoff") %>%
+    dplyr::mutate(prec_rec_dist=abs(prec-rec_sens)) %>%
+    left_join(data.frame(cutoff=fscore@x.values[[1]],
+                         fscore=fscore@y.values[[1]],
+                         stringsAsFactors = F),
+              by="cutoff") %>%
+    left_join(data.frame(cutoff=roc@alpha.values[[1]],
+                         spec=roc@x.values[[1]],
+                         stringsAsFactors = F),
+              by="cutoff") %>%
+    dplyr::mutate(Euclid_meas=sqrt((1-rec_sens)^2+(0-(1-spec))^2),
+                  Youden_meas=rec_sens+spec-1) %>%
+    left_join(data.frame(cutoff=pcfall@x.values[[1]],
+                         pcfall=pcfall@y.values[[1]],
+                         stringsAsFactors = F),
+              by="cutoff") %>%
+    left_join(data.frame(cutoff=acc@x.values[[1]],
+                         acc=acc@y.values[[1]],
+                         stringsAsFactors = F),
+              by="cutoff") %>%
+    left_join(data.frame(cutoff=mcc@x.values[[1]],
+                         mcc=mcc@y.values[[1]],
+                         stringsAsFactors = F),
+              by="cutoff") %>%
+    filter(prec > 0 & rec_sens > 0 & spec > 0) %>%
+    group_by(cutoff) %>%
+    dplyr::mutate(size=n()) %>%
+    ungroup
+  
+  # performance summary
+  lab1<-pred[real==1]
+  lab0<-pred[real==0]
+  pr<-pr.curve(scores.class0 = lab1,
+               scores.class1 = lab0,curve=F)
+  roc_ci<-pROC::ci.auc(real,pred)
+  
+  perf_summ<-data.frame(overall_meas=c("roauc_low",
+                                       "roauc",
+                                       "roauc_up",
+                                       "opt_thresh",
+                                       "opt_sens",
+                                       "opt_spec",
+                                       "opt_ppv",
+                                       "opt_npv",
+                                       "prauc1",
+                                       "prauc2",
+                                       "opt_prec",
+                                       "opt_rec",
+                                       "opt_fscore"),
+                        meas_val=c(roc_ci[[1]],
+                                   roc_ci[[2]],
+                                   roc_ci[[3]],
+                                   perf_at$cutoff[which.min(perf_at$Euclid_meas)],
+                                   perf_at$rec_sens[which.min(perf_at$Euclid_meas)],
+                                   perf_at$spec[which.min(perf_at$Euclid_meas)],
+                                   perf_at$ppv[which.min(perf_at$Euclid_meas)],
+                                   perf_at$npv[which.min(perf_at$Euclid_meas)],
+                                   pr$auc.integral,
+                                   pr$auc.davis.goadrich,
+                                   perf_at$prec[which.min(perf_at$prec_rec_dist)],
+                                   perf_at$rec_sens[which.min(perf_at$prec_rec_dist)],
+                                   perf_at$fscore[which.min(perf_at$prec_rec_dist)]),
+                        stringsAsFactors = F) %>%
+    bind_rows(perf_at %>% 
+                dplyr::summarize(prec_m=mean(prec,na.rm=T),
+                                 sens_m=mean(rec_sens,na.rm=T),
+                                 spec_m=mean(spec,na.rm=T),
+                                 ppv_m=mean(ppv,na.rm=T),
+                                 npv_m=mean(npv,na.rm=T),
+                                 acc_m=mean(acc,na.rm=T),
+                                 fscore_m=mean(fscore,na.rm=T),
+                                 mcc_m=mean(mcc,na.rm=T)) %>%
+                gather(overall_meas,meas_val))
+  
+  out<-list(perf_summ=perf_summ)
+  if(keep_all_cutoffs){
+    out$perf_at<-perf_at
+  }
+  
+  return(out)
+}
 
+get_calibr<-function(pred,real,n_bin=20){
+  calib<-data.frame(pred=pred,
+                    y=real) %>%
+    arrange(pred) %>%
+    dplyr::mutate(pred_bin = cut(pred,
+                                 breaks=unique(quantile(pred,0:(n_bin)/(n_bin))),
+                                 include.lowest=T,
+                                 labels=F)) %>%
+    ungroup %>% group_by(pred_bin) %>%
+    dplyr::summarize(expos=n(),
+                     bin_lower=min(pred),
+                     bin_upper=max(pred),
+                     bin_mid=median(pred),
+                     y_agg = sum(y),
+                     pred_p = mean(pred)) %>%
+    dplyr::mutate(y_p=y_agg/expos) %>%
+    dplyr::mutate(binCI_lower = pmax(0,pred_p-1.96*sqrt(y_p*(1-y_p)/expos)),
+                  binCI_upper = pred_p+1.96*sqrt(y_p*(1-y_p)/expos))
+  
+  return(calib)
+}
