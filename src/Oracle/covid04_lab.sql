@@ -7,15 +7,15 @@
 
 /*connect to most up-to-date CDM instance containing COVID patients*/
 
--- master encounter table
+-- make sure that the eligible encounter table is accessible
 select * from covid_eligible_enc;
 
 whenever sqlerror continue;
-drop table covid_dx;
+drop table covid_lab;
 whenever sqlerror exit;
 
 /*collect the demographic table*/
-create table covid_dx as
+create table covid_lab as
 select enc.patid
       ,labs.encounterid
       ,labs.lab_result_cm_id

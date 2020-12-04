@@ -1,2 +1,5 @@
+.gitignore
+.Rhistory
 /data
 /config
+.Rproj.user

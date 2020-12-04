@@ -2,7 +2,7 @@
 
 /*connect to most up-to-date CDM instance containing COVID patients*/
 
--- master encounter table
+-- make sure that the eligible encounter table is accessible
 select * from covid_eligible_enc;
 
 whenever sqlerror continue;
