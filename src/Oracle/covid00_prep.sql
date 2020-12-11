@@ -66,25 +66,25 @@ where obs.start_date >= '01-JAN-2020'
 commit;
 
 
+/*identify patients/encounters with ICD10 codes suggesting COVID19 (U07.1)*/
 insert into covid_enc
 with pos_cd as (
 select distinct concept_cd
 from "&&i2b2schema".concept_dimension
-where    concept_path like '%ACT\UMLS_C0031437\SNOMED_3947185011\UMLS_C0022885\UMLS_C1611271%'                 -- pending PCR lab
-      or concept_path like '%ACT\UMLS_C0031437\SNOMED_3947185011\UMLS_C0022885\UMLS_C4303880%'                 -- equivocal PCR lab
-      or concept_path like '%ACT\UMLS_C0031437\SNOMED_3947185011\UMLS_C0022885\ACT_LOCAL_LAB_ANY_PENDING%'     -- pending antibody lab
-      or concept_path like '%ACT\UMLS_C0031437\SNOMED_3947185011\UMLS_C0022885\ACT_LOCAL_LAB_ANY_EQUIVOCAL%'   -- equivocal antibody lab
+where    concept_path like '%ACT\UMLS_C0031437\SNOMED_3947185011\UMLS_C0037088\SNOMED_3947183016%' -- ACT ontology
+      or concept_path like '%ICD10%U07.1%'                                                         -- ICD10 ontology
 --      or concept_path like '...' -- add 1st local concept_path and uncomment it
 --      or concept_path like '...' -- add 2nd local concept_path and uncomment it
 )
 select obs.patient_num
       ,obs.encounter_num
-      ,1 
-      ,1 
+      ,2 
+      ,0 
 from "&&i2b2schema".observation_fact obs
 join pos_cd
 on obs.concept_cd = pos_cd.concept_cd
 where obs.start_date >= '01-JAN-2020'
+      and obs.patient_num not in (select patient_num from covid_enc)
 ;
 commit;
 
@@ -106,31 +106,38 @@ from "&&i2b2schema".observation_fact obs
 join pos_cd
 on obs.concept_cd = pos_cd.concept_cd
 where obs.start_date >= '01-JAN-2020'
+       and obs.patient_num not in (select patient_num from covid_enc)
 ;
 commit;
 
 
-
-/*identify patients/encounters with ICD10 codes suggesting COVID19 (U07.1)*/
 insert into covid_enc
 with pos_cd as (
 select distinct concept_cd
 from "&&i2b2schema".concept_dimension
-where    concept_path like '%ACT\UMLS_C0031437\SNOMED_3947185011\UMLS_C0037088\SNOMED_3947183016%' -- ACT ontology
-      or concept_path like '%ICD10%U07.1%'                                                         -- ICD10 ontology
+where    concept_path like '%ACT\UMLS_C0031437\SNOMED_3947185011\UMLS_C0022885\UMLS_C1611271%'                 -- pending PCR lab
+      or concept_path like '%ACT\UMLS_C0031437\SNOMED_3947185011\UMLS_C0022885\UMLS_C4303880%'                 -- equivocal PCR lab
+      or concept_path like '%ACT\UMLS_C0031437\SNOMED_3947185011\UMLS_C0022885\ACT_LOCAL_LAB_ANY_PENDING%'     -- pending antibody lab
+      or concept_path like '%ACT\UMLS_C0031437\SNOMED_3947185011\UMLS_C0022885\ACT_LOCAL_LAB_ANY_EQUIVOCAL%'   -- equivocal antibody lab
 --      or concept_path like '...' -- add 1st local concept_path and uncomment it
 --      or concept_path like '...' -- add 2nd local concept_path and uncomment it
 )
 select obs.patient_num
       ,obs.encounter_num
-      ,2 
-      ,0 
+      ,1 
+      ,1 
 from "&&i2b2schema".observation_fact obs
 join pos_cd
 on obs.concept_cd = pos_cd.concept_cd
 where obs.start_date >= '01-JAN-2020'
+      and obs.patient_num not in (select patient_num from covid_enc)
 ;
 commit;
+
+
+-- create index for better efficiency
+create index covid_enc_patenc_idx on covid_enc(patient_num, encounter_num);
+
 
 
 /*********************************************************************************/
