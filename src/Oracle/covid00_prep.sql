@@ -262,6 +262,7 @@ insert into code_map_obsclinc
               ,'KUH|FLO_MEAS_ID:1190' 
               ,'respiratory rate' 
         from dual
+        -- add more chunks as above if there are multiple concepts used for respiratory rate
             union
         select 'TEMP'
               ,'8310-5'
@@ -269,13 +270,15 @@ insert into code_map_obsclinc
               ,'KUH|FLO_MEAS_ID:6'
               ,'temperature' 
         from dual
+        -- add more chunks as above if there are multiple concepts used for temperature
            union 
         select 'HR'
               ,'8867-4'
               ,'LC'
               ,'KUH|FLO_MEAS_ID:8'
               ,'heart rate' 
-        from dual   
+        from dual
+        -- add more chunks as above if there are multiple concepts used for heart rate   
            union 
         select 'GCS'
               ,'35088-4'
@@ -283,6 +286,7 @@ insert into code_map_obsclinc
               ,'@'
               ,'Glascow Coma scale' 
         from dual
+        -- add more chunks as above if there are multiple concepts used for GCS
            union
         select 'SpO2'
               ,'2708-6'
@@ -290,6 +294,7 @@ insert into code_map_obsclinc
               ,'KUH|FLO_MEAS_ID:10'
               ,'SpO2' 
         from dual
+        -- add more chunks as above if there are multiple concepts used for SpO2/oxygen saturation/pulse oximeter 
             union
 		select 'FiO2'
               ,'19996-8'
@@ -311,6 +316,7 @@ insert into code_map_obsclinc
               ,'KUH|FLO_MEAS_ID:301550'
               ,'FiO2' 
         from dual
+        -- add more chunks as above if there are multiple concepts used for FiO2
             union
         select 'PaO2'
               ,'2703-7'
@@ -318,6 +324,7 @@ insert into code_map_obsclinc
               ,'mmHg'
               ,'PaO2' 
         from dual
+        -- add more chunks as above if there are multiple concepts used for PaO2
             union
         select 'PaFiO2'
               ,'50983-6'
@@ -325,6 +332,7 @@ insert into code_map_obsclinc
               ,'KUH|FLO_MEAS_ID:4916'
               ,'PaO2/FiO2' 
         from dual
+        -- add more chunks as above if there are multiple concepts used for PaO2/FiO2
 	) t
 ;
 commit;
